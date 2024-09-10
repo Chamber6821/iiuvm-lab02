@@ -60,10 +60,10 @@ void boss() {
       << std::endl;
     if (connection > disconnection)
       std::cout //
-        << "Works with carger:    " << timestamp() - disconnection << " sec\n";
+        << "Works with carger:    " << timestamp() - connection << " sec\n";
     else
       std::cout //
-        << "Works without carger: " << timestamp() - connection << " sec\n";
+        << "Works without carger: " << timestamp() - disconnection << " sec\n";
     Sleep(1000);
   }
 }
