@@ -1,0 +1,25 @@
+BasedOnStyle: LLVM
+
+# Indents
+UseTab: Never
+IndentWidth: 2
+# Obj{
+#   arg1,
+#   arg2
+# };
+BracedInitializerIndentWidth: 2
+# make<A>(
+#   make<B>(),
+#   make<C>()
+# );
+ContinuationIndentWidth: 2
+
+SeparateDefinitionBlocks: Always
+AlwaysBreakTemplateDeclarations: Yes
+AllowShortIfStatementsOnASingleLine: Always
+AlignConsecutiveMacros: AcrossEmptyLines
+AllowAllArgumentsOnNextLine: false
+AllowShortCaseLabelsOnASingleLine: true
+AlignAfterOpenBracket: BlockIndent
+BinPackArguments: false
+BreakStringLiterals: false
