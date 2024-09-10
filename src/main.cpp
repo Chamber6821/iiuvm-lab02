@@ -1,6 +1,8 @@
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -50,23 +52,22 @@ std::int64_t lastChargerDisconnection() {
 }
 
 void boss() {
+  const auto column = std::setw(15);
   while (true) {
     auto connection = lastChargerConnection();
     auto disconnection = lastChargerDisconnection();
     auto status = powerStatus();
+    std::system("cls");
     std::cout //
-      << "AC line:              " << (int)status.ACLineStatus << std::endl
-      << "Battery flag:         " << (int)status.BatteryFlag << std::endl
-      << "Battery life percent: " << (int)status.BatteryLifePercent << std::endl
-      << "Battery life time:    " << (int)status.BatteryLifeTime << std::endl
-      << "Full life time:       " << (int)status.BatteryFullLifeTime
-      << std::endl;
+      << column << "Charge: " << (int)status.BatteryLifePercent << "%\n"
+      << column << "Life time: " << "~" << (int)status.BatteryLifeTime
+      << " sec\n";
     if (connection > disconnection)
       std::cout //
-        << "Works with carger:    " << timestamp() - connection << " sec\n";
+        << column << "Charges: " << timestamp() - connection << " sec\n";
     else
       std::cout //
-        << "Works without carger: " << timestamp() - disconnection << " sec\n";
+        << column << "Discharges: " << timestamp() - disconnection << " sec\n";
     Sleep(1000);
   }
 }
