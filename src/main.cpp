@@ -22,12 +22,12 @@ auto timestamp() {
 }
 
 void warden() {
-  BYTE oldAcLine = 255;
+  BYTE oldAcLine = powerStatus().ACLineStatus;
+  if (oldAcLine == 255) throw std::runtime_error("AC line has unknown status");
   while (true) {
     Sleep(1000);
     auto acLine = powerStatus().ACLineStatus;
     if (acLine == oldAcLine) continue;
-    if (acLine == 255) continue;
     std::ofstream(acLine ? "charger-connected" : "charger-disconnected")
       << timestamp();
     oldAcLine = acLine;
