@@ -30,6 +30,9 @@ void warden() {
     if (acLine == oldAcLine) continue;
     std::ofstream(acLine ? "charger-connected" : "charger-disconnected")
       << timestamp();
+    std::cout << timestamp() << ": "
+              << (acLine ? "charger is connected" : "charger is disconnected")
+              << std::endl;
     oldAcLine = acLine;
   }
 }
