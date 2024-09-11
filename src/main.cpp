@@ -74,9 +74,12 @@ void boss() {
     std::system("cls");
     std::cout //
       << column << "Status: " << batteryStatus(status.BatteryFlag) << "\n"
-      << column << "Charge: " << (int)status.BatteryLifePercent << "%\n"
-      << column << "Life time: " << "~" << (int)status.BatteryLifeTime
-      << " sec\n";
+      << column << "Charge: " << (int)status.BatteryLifePercent << "%\n";
+    if (status.BatteryLifeTime == (DWORD)-1)
+      std::cout << column << "Life time: " << "N/A\n";
+    else
+      std::cout << column << "Life time: " << "~" << (int)status.BatteryLifeTime
+                << " sec\n";
     if (connection > disconnection)
       std::cout //
         << column << "Charges: " << timestamp() - connection << " sec\n";
