@@ -51,6 +51,20 @@ std::int64_t lastChargerDisconnection() {
   return time;
 }
 
+const char *batteryStatus(BYTE batteryFlag) {
+  switch (batteryFlag) {
+  case 0: return "Eeeeeew, something between low and high";
+  case 128: return "Absent";
+  case 8 | 1: return "High and charging";
+  case 8 | 2: return "Low and charging";
+  case 8 | 3: return "Critical and charging";
+  case 1: return "High";
+  case 2: return "Low";
+  case 3: return "Critical";
+  default: return "unknown";
+  }
+}
+
 void boss() {
   const auto column = std::setw(15);
   while (true) {
@@ -59,6 +73,7 @@ void boss() {
     auto status = powerStatus();
     std::system("cls");
     std::cout //
+      << column << "Status: " << batteryStatus(status.BatteryFlag) << "\n"
       << column << "Charge: " << (int)status.BatteryLifePercent << "%\n"
       << column << "Life time: " << "~" << (int)status.BatteryLifeTime
       << " sec\n";
