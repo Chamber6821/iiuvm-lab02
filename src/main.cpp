@@ -90,6 +90,8 @@ void boss() {
   }
 }
 
+void shutdown() { std::system("shutdown -s -t 0"); }
+
 int main(int argc, char **argv) {
   std::vector<std::string> args(argv, argv + argc);
   if (args.size() != 2)
@@ -100,4 +102,8 @@ int main(int argc, char **argv) {
   if (mode == "warden") warden();
   else if (mode == "boss")
     boss();
+  else if (mode == "shutdown")
+    shutdown();
+  else
+    throw std::runtime_error(std::string("Unknown mode: ") + mode);
 }
