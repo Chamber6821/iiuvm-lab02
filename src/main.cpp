@@ -13,21 +13,6 @@ extern "C" {
 #include "driver.h"
 }
 
-#define IOCTL_READ_PORT                                                        \
-  CTL_CODE(                                                                    \
-    FILE_DEVICE_UNKNOWN,                                                       \
-    READ_CODE,                                                                 \
-    METHOD_BUFFERED,                                                           \
-    GENERIC_READ | GENERIC_WRITE                                               \
-  )
-#define IOCTL_WRITE_PORT                                                       \
-  CTL_CODE(                                                                    \
-    FILE_DEVICE_UNKNOWN,                                                       \
-    WRITE_CODE,                                                                \
-    METHOD_BUFFERED,                                                           \
-    GENERIC_READ | GENERIC_WRITE                                               \
-  )
-
 using PortWrite = IoRequestWrite;
 using PortRead = IoRequestRead;
 using PortData = IoResponse;
@@ -36,7 +21,7 @@ class IO {
 public:
   IO() {
     hDevice = CreateFileW(
-      L"\\??\\My_PCI",
+      L"\\??\\PortIoDriver",
       GENERIC_READ | GENERIC_WRITE,
       FILE_SHARE_READ,
       NULL,
@@ -52,7 +37,7 @@ public:
     request.value = value;
     DeviceIoControl(
       hDevice,
-      IOCTL_WRITE_PORT,
+      WRITE_CODE,
       &request,
       sizeof(request),
       NULL,
@@ -68,7 +53,7 @@ public:
     PortData response = {0};
     DeviceIoControl(
       hDevice,
-      IOCTL_READ_PORT,
+      READ_CODE,
       &request,
       sizeof(request),
       &response,
