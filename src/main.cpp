@@ -1,220 +1,179 @@
-#include <algorithm>
+#include "IO.hpp"
 #include <cstdint>
+#include <format>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
+#include <map>
+#include <memory>
+#include <sstream>
 #include <string>
-#include <unordered_map>
+#include <string_view>
+#include <utility>
 #include <vector>
 
-#include <windows.h>
+namespace PciConfig {
 
-extern "C" {
-#include "driver.h"
-}
+constexpr int AddressPort = 0x0CF8;
+constexpr int DataPort = 0x0CFC;
 
-using PortWrite = IoRequestWrite;
-using PortRead = IoRequestRead;
-using PortData = IoResponse;
+class Address {
 
-class IO {
 public:
-  IO() {
-    hDevice = CreateFileW(
-      L"\\??\\PortIoDriver",
-      GENERIC_READ | GENERIC_WRITE,
-      FILE_SHARE_READ,
-      NULL,
-      OPEN_EXISTING,
-      FILE_ATTRIBUTE_NORMAL,
-      NULL
-    );
-  }
-
-  void write(uint16_t port, uint32_t value) {
-    PortWrite request;
-    request.port = port;
-    request.value = value;
-    DeviceIoControl(
-      hDevice,
-      WRITE_CODE,
-      &request,
-      sizeof(request),
-      NULL,
-      0,
-      NULL,
-      NULL
-    );
-  }
-
-  uint32_t read(uint16_t port) {
-    PortRead request;
-    request.port = port;
-    PortData response = {0};
-    DeviceIoControl(
-      hDevice,
-      READ_CODE,
-      &request,
-      sizeof(request),
-      &response,
-      sizeof(response),
-      NULL,
-      NULL
-    );
-    return response.value;
-  }
+  std::uint8_t offset;
+  std::uint8_t function : 3;
+  std::uint8_t slot : 5;
+  std::uint8_t bus;
 
 private:
-  HANDLE hDevice;
+  std::uint8_t reserved : 7 = 0;
+  std::uint8_t enable : 1 = 1;
+
+public:
+  Address(
+    std::uint8_t bus, std::uint8_t slot, std::uint8_t function,
+    std::uint8_t offset
+  )
+      : bus(bus), slot(slot), function(function), offset(offset) {}
+
+  std::uint32_t asBytes() const {
+    return reinterpret_cast<const std::uint32_t &>(*this);
+  }
 };
 
-#define PCI_CONFIG_ADDRESS 0x0CF8
-#define PCI_CONFIG_DATA    0x0CFC
-#define MAGIC_CONSTANT     0x80000000
-#define OFFSET_CUTOFF      0xFC
-#define GET_PCI_DEVICE_ADDR(bus, slot, func, offset)                           \
-  ((bus << 16) | (slot << 11) | (func << 8) | (offset & OFFSET_CUTOFF) |       \
-   MAGIC_CONSTANT)
+struct Register0 {
+  std::uint16_t vendorId;
+  std::uint16_t deviceId;
 
-struct PCI_DEVICE_RECORD {
-  uint16_t VENDOR_ID;
-  uint16_t DEVICE_ID;
+  Register0(std::uint16_t vendorId, std::uint16_t deviceId)
+      : vendorId(vendorId), deviceId(deviceId) {}
+
+  Register0(std::uint32_t bytes)
+      : Register0(bytes & 0xFFFF, (bytes >> 16) & 0xFFFF) {}
+
+  bool available() const { return vendorId != 0xFFFF; }
+
+  bool operator<(const Register0 &other) const {
+    return vendorId < other.vendorId or deviceId < other.deviceId;
+  }
 };
 
-struct PCI_DEVICE_INFO {
-  int bus;
-  int slot;
-  int func;
-  std::string vid;
-  std::string did;
-  std::string vname;
-  std::string dname;
+struct Device {
+  Address address;
+  Register0 register0;
+
+  Device(Address address, Register0 register0)
+      : address(std::move(address)), register0(std::move(register0)) {}
+
+  Device(IO io, Address address) : address(address), register0(0xFFFF, 0xFFFF) {
+    io.write(AddressPort, address.asBytes());
+    register0 = io.read(DataPort);
+  }
 };
 
-uint32_t readPCIDeviceInfoPart(int bus, int slot, int func, int offset) {
-  IO io;
-  uint32_t address = GET_PCI_DEVICE_ADDR(bus, slot, func, offset);
-  io.write(PCI_CONFIG_ADDRESS, address);
-  return io.read(PCI_CONFIG_DATA);
+} // namespace PciConfig
+
+struct DeviceInfo {
+  std::string vendorName;
+  std::string deviceName;
+};
+
+template <class T>
+T parseHex(std::string_view str) {
+  T buffer;
+  std::stringstream ss;
+  ss << std::hex << str;
+  ss >> buffer;
+  return buffer;
 }
 
-PCI_DEVICE_RECORD readPCIDeviceInfo(int bus, int slot, int func) {
-  PCI_DEVICE_RECORD record;
-  uint32_t *cursor = (uint32_t *)&record;
-  for (int i = 0; i < sizeof(PCI_DEVICE_RECORD) / sizeof(uint32_t); i++) {
-    cursor[i] = readPCIDeviceInfoPart(bus, slot, func, i * sizeof(uint32_t));
-  }
-  return record;
+template <class T>
+std::string toHex(T number) {
+  return std::format("{:0{}x}", number, sizeof(number) * 2);
 }
 
-std::unordered_map<std::string, std::string> vendorMap;
-std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
-  deviceMap;
-
-void parsePciIds() {
-  std::ifstream file("pci.ids");
-  if (!file.is_open()) {
-    std::cerr << "pci.ids not found" << std::endl;
-    exit(-1);
-  }
-
+auto vendorsMap(std::istream &&in) {
+  auto deviceInfoMap =
+    std::make_shared<std::map<PciConfig::Register0, DeviceInfo>>();
   std::string line;
-  std::string currentVendor;
+  while (not std::getline(in, line).fail()) {
+    if (line.empty() or line.starts_with("#")) continue;
+    auto vendorId = parseHex<std::uint16_t>(line.substr(0, 4));
+    auto vendorName = line.substr(6);
 
-  while (std::getline(file, line)) {
-    if (line.empty() || line[0] == '#') continue;
-
-    if (line[0] == '\t') {
-      std::string deviceId = line.substr(1, 4);
-      std::string deviceName = line.substr(7);
-      deviceMap[currentVendor][deviceId] = deviceName;
-      continue;
+    while (not std::getline(in, line).fail() and line[0] == '\t') {
+      if (line.empty() or line.starts_with("#")) continue;
+      auto deviceId = parseHex<std::uint16_t>(line.substr(1, 4));
+      auto deviceName = line.substr(7);
+      (*deviceInfoMap)[PciConfig::Register0(vendorId, deviceId)] = {
+        .vendorName = vendorName,
+        .deviceName = deviceName
+      };
     }
-
-    currentVendor = line.substr(0, 4);
-    std::string vname = line.substr(6);
-    vendorMap[currentVendor] = vname;
   }
-
-  file.close();
+  return [deviceInfoMap](const PciConfig::Register0 &reg) -> DeviceInfo {
+    if (not deviceInfoMap->contains(reg))
+      return {.vendorName = "N/A", .deviceName = "N/A"};
+    return deviceInfoMap->at(reg);
+  };
 }
 
-std::string shortToHex(unsigned short num) {
-  char buffer[5] = {0};
-  sprintf_s(buffer, 5, "%04x", num);
-
-  return std::string(buffer);
-}
-
-std::string findVendorName(unsigned short vendorId) {
-  std::string vendorName = vendorMap[shortToHex(vendorId)];
-
-  return (vendorName.empty() ? "N/A" : vendorName);
-}
-
-std::string findDeviceName(unsigned short vendorId, unsigned short deviceId) {
-  std::string deviceName =
-    deviceMap[shortToHex(vendorId)][shortToHex(deviceId)];
-
-  return (deviceName.empty() ? "N/A" : deviceName);
-}
-
-void printTableDeviceRecord(PCI_DEVICE_INFO info) {
-  std::cout << "|" << std::hex << std::setw(3) << info.bus << "|"
-            << std::setw(4) << info.slot << "|" << std::setw(4) << info.func
-            << "|" << std::setw(4) << info.vid << "|" << std::setw(4)
-            << info.did << "|" << std::setw(40) << info.vname << "|"
-            << std::setw(70) << info.dname << "|" << std::dec << std::endl;
-}
-
-void printTableHeader() {
-  std::cout << "|" << "BUS|" << "SLOT|" << "FUNC|" << "V_ID|" << "D_ID|"
-            << std::setw(41) << "V_NM|" << std::setw(71) << "D_NM|"
-            << std::endl;
-}
-
-bool isDevicePresent(int bus, int slot, int func) {
-  return readPCIDeviceInfoPart(bus, slot, func, 0) != 0xffffffff;
-}
-
-bool comparator(const PCI_DEVICE_INFO &dev1, const PCI_DEVICE_INFO &dev2) {
-  int difference = dev1.vname.compare(dev2.vname);
-
-  if (difference < 0) return true;
-
-  if (difference > 0) return false;
-
-  return dev1.dname.compare(dev2.dname) < 0;
-}
-
-int main() {
-  parsePciIds();
-
-  std::vector<PCI_DEVICE_INFO> devices;
-
+std::vector<PciConfig::Device> allDevices() {
+  std::vector<PciConfig::Device> devices;
   for (int bus = 0; bus < 256; bus++) {
     for (int slot = 0; slot < 32; slot++) {
       for (int func = 0; func < 8; func++) {
-        if (!isDevicePresent(bus, slot, func)) continue;
-
-        PCI_DEVICE_RECORD record = readPCIDeviceInfo(bus, slot, func);
-
-        devices.push_back(
-          {bus,
-           slot,
-           func,
-           shortToHex(record.VENDOR_ID),
-           shortToHex(record.DEVICE_ID),
-           findVendorName(record.VENDOR_ID),
-           findDeviceName(record.VENDOR_ID, record.DEVICE_ID)}
-        );
+        auto device =
+          PciConfig::Device(IO(), PciConfig::Address(bus, slot, func, 0));
+        if (not device.register0.available()) continue;
+        devices.emplace_back(std::move(device));
       }
     }
   }
+  return devices;
+}
 
-  std::sort(devices.begin(), devices.end(), comparator);
-  printTableHeader();
-  for (auto &el : devices) {
-    printTableDeviceRecord(el);
+int main() {
+  std::cout << "Parse pci.ids...\n";
+  auto infoMap = vendorsMap(std::ifstream("pci.ids"));
+  std::cout << "Scan all devices...\n";
+  auto devices = allDevices();
+  std::cout << "Sort devices...\n";
+  std::sort(
+    devices.begin(),
+    devices.end(),
+    [infoMap](const auto &a, const auto &b) {
+      auto aInfo = infoMap(a.register0);
+      auto bInfo = infoMap(b.register0);
+      return aInfo.vendorName < bInfo.vendorName or
+             aInfo.deviceName < bInfo.deviceName;
+    }
+  );
+  std::cout << "Print devices:\n";
+  constexpr std::string_view tableRowFormat =
+    "|{:4}|{:4}|{:4}|{:4}|{:4}|{:45}|{:75}\n";
+  std::cout << std::format(
+    tableRowFormat,
+    "BUS",
+    "SLOT",
+    "FUNC",
+    "VID",
+    "DID",
+    "Vendor Name",
+    "Device Name"
+  );
+  for (auto &device : devices) {
+    auto address = device.address;
+    auto register0 = device.register0;
+    auto info = infoMap(register0);
+    std::cout << std::format(
+      tableRowFormat,
+      address.bus,
+      int(address.slot),
+      int(address.function),
+      toHex(register0.vendorId),
+      toHex(register0.deviceId),
+      info.vendorName,
+      info.deviceName
+    );
   }
 }
