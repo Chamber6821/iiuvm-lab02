@@ -1,10 +1,10 @@
 #include "IO.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <format>
 #include <fstream>
 #include <iostream>
 #include <map>
-#include <memory>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -52,9 +52,7 @@ struct Register0 {
 
   bool available() const { return vendorId != 0xFFFF; }
 
-  bool operator<(const Register0 &other) const {
-    return vendorId < other.vendorId or deviceId < other.deviceId;
-  }
+  auto operator<=>(const Register0 &other) const = default;
 };
 
 struct Device {
@@ -92,28 +90,38 @@ std::string toHex(T number) {
 }
 
 auto vendorsMap(std::istream &&in) {
-  auto deviceInfoMap =
-    std::make_shared<std::map<PciConfig::Register0, DeviceInfo>>();
+  auto vendorNames = std::map<std::uint16_t, std::string>();
+  auto deviceNames =
+    std::map<std::uint16_t, std::map<std::uint16_t, std::string>>();
   std::string line;
-  while (not std::getline(in, line).fail()) {
-    if (line.empty() or line.starts_with("#")) continue;
+  std::getline(in, line);
+  while (not in.fail()) {
+    if (line.empty() or line.starts_with("#")) {
+      std::getline(in, line);
+      continue;
+    }
     auto vendorId = parseHex<std::uint16_t>(line.substr(0, 4));
     auto vendorName = line.substr(6);
+    vendorNames[vendorId] = vendorName;
 
-    while (not std::getline(in, line).fail() and line[0] == '\t') {
+    while (not std::getline(in, line).fail()) {
       if (line.empty() or line.starts_with("#")) continue;
+      if (line[0] != '\t') break;
+      if (line[1] == '\t') continue;
       auto deviceId = parseHex<std::uint16_t>(line.substr(1, 4));
       auto deviceName = line.substr(7);
-      (*deviceInfoMap)[PciConfig::Register0(vendorId, deviceId)] = {
-        .vendorName = vendorName,
-        .deviceName = deviceName
-      };
+      deviceNames[vendorId][deviceId] = deviceName;
     }
   }
-  return [deviceInfoMap](const PciConfig::Register0 &reg) -> DeviceInfo {
-    if (not deviceInfoMap->contains(reg))
-      return {.vendorName = "N/A", .deviceName = "N/A"};
-    return deviceInfoMap->at(reg);
+  return [vendorNames = std::move(vendorNames),
+          deviceNames = std::move(deviceNames)](const PciConfig::Register0 &reg
+         ) mutable -> DeviceInfo {
+    auto vendor = vendorNames[reg.vendorId];
+    auto device = deviceNames[reg.vendorId][reg.deviceId];
+    return {
+      .vendorName = vendor.empty() ? "N/A" : std::move(vendor),
+      .deviceName = device.empty() ? "N/A" : std::move(device),
+    };
   };
 }
 
@@ -138,16 +146,7 @@ int main() {
   std::cout << "Scan all devices...\n";
   auto devices = allDevices();
   std::cout << "Sort devices...\n";
-  std::sort(
-    devices.begin(),
-    devices.end(),
-    [infoMap](const auto &a, const auto &b) {
-      auto aInfo = infoMap(a.register0);
-      auto bInfo = infoMap(b.register0);
-      return aInfo.vendorName < bInfo.vendorName or
-             aInfo.deviceName < bInfo.deviceName;
-    }
-  );
+  std::ranges::sort(devices, {}, &PciConfig::Device::register0);
   std::cout << "Print devices:\n";
   constexpr std::string_view tableRowFormat =
     "|{:4}|{:4}|{:4}|{:4}|{:4}|{:45}|{:75}\n";
